@@ -1,0 +1,126 @@
+import sys
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QFileDialog, QSlider
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+from PyQt5.QtCore import QUrl, Qt # Qt 모듈 추가 (수동 슬라이더 이동을 위해)
+from PyQt5 import uic
+import os
+
+class MediaPlayerApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        
+        try:
+            # .ui 파일을 로드합니다. 파일 경로가 정확한지 확인해주세요.
+            uic.loadUi("player_ui.ui", self)
+        except FileNotFoundError:
+            print("오류: 'player_ui.ui' 파일을 찾을 수 없습니다. 같은 디렉토리에 있는지 확인하거나 경로를 수정해주세요.")
+            sys.exit(1)
+
+        self.mediaPlayer = QMediaPlayer() # QMediaPlayer 객체 생성
+        self.current_media_path = None # 현재 재생 중인 미디어 파일 경로
+
+        # --- UI 위젯 연결 ---
+        self.openFileButton = self.findChild(QPushButton, 'openFileButton')
+        self.playButton = self.findChild(QPushButton, 'playButton')
+        self.fileNameLabel = self.findChild(QLabel, 'fileNameLabel')
+        
+        # --- progressBar 위젯 연결 ---
+        self.progressBar = self.findChild(QSlider, 'progressBar')
+
+        # --- 시그널/슬롯 연결 ---
+        self.openFileButton.clicked.connect(self.open_file)
+        self.playButton.clicked.connect(self.toggle_play_pause) # 재생/일시정지 기능 결합
+        
+        # --- progressBar 관련 시그널 연결 ---
+        self.mediaPlayer.positionChanged.connect(self.position_changed) # 재생 위치 변경 시
+        self.mediaPlayer.durationChanged.connect(self.duration_changed) # 총 재생 시간 변경 시
+        self.progressBar.sliderMoved.connect(self.set_position) # 슬라이더를 수동으로 움직였을 때
+
+        # 미디어 플레이어의 상태 변화 감지
+        self.mediaPlayer.mediaStatusChanged.connect(self.media_status_changed)
+        self.mediaPlayer.stateChanged.connect(self.media_playback_state_changed) # 재생 상태 변경 시
+
+        # 초기 상태
+        self.playButton.setEnabled(False) 
+        self.progressBar.setEnabled(False) # 처음에는 진행바 비활성화
+        self.progressBar.setTracking(False) # 슬라이더를 드래그하는 동안 positionChanged 시그널 발생 억제 (성능 개선)
+
+    def open_file(self):
+        # MP3 파일 열기 다이얼로그
+        file_path, _ = QFileDialog.getOpenFileName(self, "MP3 파일 선택", "", "MP3 Files (*.mp3);;All Files (*)")
+        
+        if file_path:
+            self.current_media_path = file_path
+            # 파일 이름을 레이블에 표시
+            self.fileNameLabel.setText(os.path.basename(file_path)) 
+            
+            # 선택된 파일을 미디어 플레이어에 설정
+            content = QMediaContent(QUrl.fromLocalFile(file_path))
+            self.mediaPlayer.setMedia(content)
+            
+            self.playButton.setText("재생") # 새 파일 로드 시 버튼 텍스트 초기화
+            self.progressBar.setValue(0) # 새 파일 로드 시 진행바 초기화
+
+            # 파일이 로드되면 재생 버튼과 진행바 활성화 (media_status_changed에서 최종 처리)
+            print(f"선택된 파일: {self.current_media_path}")
+
+    def toggle_play_pause(self):
+        # 재생 중이면 일시정지, 일시정지 또는 정지 상태면 재생
+        if self.current_media_path: # 파일이 선택되어 있을 경우에만 동작
+            if self.mediaPlayer.state() == QMediaPlayer.PlayingState:
+                self.mediaPlayer.pause()
+                print("음악 일시정지")
+            else:
+                self.mediaPlayer.play()
+                print("음악 재생 시작 또는 재개")
+        else:
+            print("재생할 파일이 선택되지 않았습니다. 먼저 파일을 선택해주세요.")
+
+    def position_changed(self, position):
+        # 재생 위치가 변경될 때마다 progressBar 업데이트
+        if self.progressBar.maximum() > 0: # progressBar의 maximum이 설정되었을 때만 업데이트
+            self.progressBar.setValue(position)
+
+    def duration_changed(self, duration):
+        # 미디어의 총 길이가 변경될 때마다 progressBar의 최대값 설정
+        self.progressBar.setRange(0, duration) # progressBar의 범위 설정
+        print(f"총 재생 시간 (밀리초): {duration}")
+
+    def set_position(self, position):
+        # progressBar를 수동으로 움직였을 때 재생 위치 변경
+        self.mediaPlayer.setPosition(position)
+        print(f"재생 위치를 {position} (밀리초)으로 변경")
+
+    def media_status_changed(self, status):
+        # 미디어 로드 상태에 따라 재생 버튼 및 진행바 활성화/비활성화
+        if status == QMediaPlayer.MediaStatus.NoMedia:
+            self.playButton.setEnabled(False)
+            self.progressBar.setEnabled(False)
+            self.fileNameLabel.setText("선택된 파일 없음")
+        elif status == QMediaPlayer.MediaStatus.LoadedMedia:
+            # 미디어가 로드되면 재생 버튼과 진행바 활성화
+            self.playButton.setEnabled(True)
+            self.progressBar.setEnabled(True)
+            self.playButton.setText("재생") # 미디어 로드 완료 후 재생 가능 상태
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+            print("재생이 종료되었습니다.")
+            self.mediaPlayer.stop() # 재생 종료 후 정지 상태로 전환
+            self.playButton.setText("재생") # 버튼 텍스트를 '재생'으로
+            self.playButton.setEnabled(False) # 다음 파일을 선택해야 다시 재생 가능
+            self.progressBar.setValue(0) # 진행바 초기화
+
+    def media_playback_state_changed(self, state):
+        # 재생 상태(재생 중, 일시정지, 정지)에 따라 버튼 텍스트 변경
+        if state == QMediaPlayer.PlayingState:
+            self.playButton.setText("일시정지")
+        elif state == QMediaPlayer.PausedState:
+            self.playButton.setText("재개") # 일시정지 시 버튼 텍스트 변경
+        elif state == QMediaPlayer.StoppedState:
+            self.playButton.setText("재생") # 정지 시 버튼 텍스트 변경
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    player = MediaPlayerApp()
+    player.show()
+    sys.exit(app.exec_())
